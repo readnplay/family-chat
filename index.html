@@ -9,7 +9,9 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="우리 가족">
 <title>우리 가족 채팅방</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='88'>🏠</text></svg>">
+<link rel="icon" type="image/png" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
 <style>
   :root {
     --bg: #fff7ec; --panel: #ffffff; --ink: #2b2420; --muted: #8a7d73; --line: #f0e2d1;
@@ -110,6 +112,16 @@
   .toast { position: fixed; left: 50%; top: calc(70px + env(safe-area-inset-top)); transform: translateX(-50%); z-index: 20;
            background: #2b2420; color: #fff; padding: 11px 18px; border-radius: 999px; font-size: 15px; max-width: calc(100% - 32px); text-align: center; }
   .drop { outline: 3px dashed var(--accent); outline-offset: -8px; }
+
+  .bell { border: 0; border-radius: 999px; padding: 8px 14px; font-size: 14px; font-weight: 700; cursor: pointer; white-space: nowrap;
+          background: var(--accent); color: #fff; }
+  .bell.on { background: var(--soft); color: var(--accent-dark); font-weight: 600; }
+  #help { position: fixed; inset: 0; background: rgba(40, 25, 10, .45); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 15; }
+  #help .card { text-align: left; max-width: 420px; }
+  #help h3 { margin: 0 0 12px; font-size: 20px; }
+  #help ol { margin: 0 0 18px; padding-left: 22px; line-height: 1.7; }
+  #help .note { color: var(--muted); font-size: 14px; margin: 0 0 18px; line-height: 1.5; }
+  @media (max-width: 480px) { .me-chip { display: none; } }
 </style>
 </head>
 <body>
@@ -134,6 +146,7 @@
   <header>
     <h2>🏠 우리 가족</h2>
     <span class="me-chip" id="meChip"></span>
+    <button class="bell" id="bellBtn" type="button">🔔 알림 켜기</button>
     <button class="link-btn" id="logoutBtn" type="button">나가기</button>
   </header>
   <main id="list">
@@ -154,6 +167,14 @@
   <img id="viewerImg" alt="">
   <button class="close" id="viewerClose" type="button" aria-label="닫기">✕</button>
   <a id="viewerSave" href="#" rel="noopener">⬇ 원본 저장</a>
+</div>
+
+<div id="help" class="hidden" role="dialog" aria-modal="true">
+  <div class="card">
+    <h3 id="helpTitle"></h3>
+    <div id="helpBody"></div>
+    <button class="btn" id="helpOk" type="button">알겠어요</button>
+  </div>
 </div>
 
 <script>
@@ -565,6 +586,119 @@
     sendFiles([...e.dataTransfer.files]);
   });
 
+  // ---------- 알림 (사이트를 닫아 둬도 새 메시지가 오면 알려 줌) ----------
+  const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const STANDALONE = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const PUSH_OK = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  let swReg = null, pushOn = false;
+  const bell = $('#bellBtn');
+
+  function updateBell() {
+    bell.classList.toggle('on', pushOn);
+    bell.textContent = pushOn ? '🔔 알림 켜짐' : '🔕 알림 켜기';
+  }
+
+  function showHelp(title, html) {
+    $('#helpTitle').textContent = title;
+    $('#helpBody').innerHTML = html;
+    $('#help').classList.remove('hidden');
+  }
+  $('#helpOk').onclick = () => $('#help').classList.add('hidden');
+
+  const IOS_HELP = `<ol>
+      <li>사파리 화면의 <b>공유 버튼</b>(네모에 화살표 ⬆)을 눌러요.</li>
+      <li><b>홈 화면에 추가</b>를 눌러요.</li>
+      <li>홈 화면에 생긴 <b>🏠 우리 가족</b> 아이콘으로 열어요.</li>
+      <li>다시 들어간 뒤 <b>🔕 알림 켜기</b>를 누르고 <b>허용</b>을 눌러요.</li>
+    </ol>
+    <p class="note">아이패드·아이폰은 홈 화면에 추가해야만 알림이 와요. 홈 화면 아이콘으로 처음 열 때는 이름과 비밀번호를 한 번 더 넣어야 해요.</p>`;
+  const DENIED_HELP = `<ol>
+      <li>주소창 왼쪽의 <b>자물쇠(또는 설정) 아이콘</b>을 눌러요.</li>
+      <li><b>알림</b>을 <b>허용</b>으로 바꿔요.</li>
+      <li>이 화면을 새로고침한 뒤 <b>🔕 알림 켜기</b>를 다시 눌러요.</li>
+    </ol>
+    <p class="note">홈 화면 아이콘으로 쓰는 경우에는 기기 <b>설정 → 알림</b>에서 '우리 가족'을 허용해 주세요.</p>`;
+
+  function keyBytes(b64) {
+    const s = atob((b64 + '='.repeat((4 - b64.length % 4) % 4)).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from(s, (c) => c.charCodeAt(0));
+  }
+
+  async function subscribePush() {
+    const { publicKey } = await api('/api/push');
+    let sub = await swReg.pushManager.getSubscription();
+    if (sub && store.get('fc_vapid') !== publicKey) { await sub.unsubscribe().catch(() => {}); sub = null; }
+    if (!sub) sub = await swReg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(publicKey) });
+    store.set('fc_vapid', publicKey);
+    await api('/api/push', { method: 'POST', body: JSON.stringify({ subscription: sub.toJSON() }) });
+    pushOn = true;
+  }
+
+  async function unsubscribePush(tellServer) {
+    pushOn = false;
+    const sub = swReg && await swReg.pushManager.getSubscription().catch(() => null);
+    if (!sub) return;
+    if (tellServer && token) {
+      await api('/api/push', { method: 'POST', body: JSON.stringify({ action: 'unsubscribe', endpoint: sub.endpoint }) }).catch(() => {});
+    }
+    await sub.unsubscribe().catch(() => {});
+  }
+
+  async function initPush() {
+    if ('serviceWorker' in navigator && !swReg) {
+      try {
+        await navigator.serviceWorker.register('/sw.js');
+        swReg = await navigator.serviceWorker.ready;
+      } catch {}
+    }
+    // 이미 허락한 기기는 들어올 때마다 조용히 다시 등록 (이름이 바뀌어도 맞게)
+    if (PUSH_OK && swReg && Notification.permission === 'granted' && !store.get('fc_push_off')) {
+      try { await subscribePush(); } catch {}
+    }
+    updateBell();
+    // 아직 안 켠 기기는 처음 한 번 알려 준다
+    if (!pushOn && !store.get('fc_push_asked')) {
+      store.set('fc_push_asked', '1');
+      toast('🔔 알림 켜기를 누르면 채팅이 올 때 알려 줘요');
+    }
+  }
+
+  bell.onclick = async () => {
+    if (pushOn) {
+      if (!confirm('이 기기에서 채팅 알림을 끌까요?')) return;
+      store.set('fc_push_off', '1');
+      await unsubscribePush(true);
+      updateBell();
+      toast('알림을 껐어요');
+      return;
+    }
+    if (!PUSH_OK) {
+      if (IS_IOS && !STANDALONE) return showHelp('아이패드·아이폰에서 알림 받기', IOS_HELP);
+      return showHelp('이 브라우저는 알림을 못 받아요',
+        '<p class="note">크롬, 삼성 인터넷, 사파리(홈 화면에 추가) 최신 버전에서 알림을 받을 수 있어요.</p>');
+    }
+    if (Notification.permission === 'denied') return showHelp('알림이 막혀 있어요', DENIED_HELP);
+    // 아이패드는 버튼을 누른 바로 그 순간에 허락을 물어야 해서 다른 일보다 먼저 한다
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') {
+      if (perm === 'denied') showHelp('알림이 막혀 있어요', DENIED_HELP);
+      else toast('알림이 허용되지 않았어요');
+      return;
+    }
+    bell.disabled = true;
+    try {
+      if (!swReg) swReg = await navigator.serviceWorker.ready;
+      await subscribePush();
+      store.del('fc_push_off');
+      toast('알림을 켰어요! 이제 채팅이 오면 알려 줄게요 🔔');
+    } catch (e) {
+      toast('알림 켜기에 실패했어요. 잠시 후 다시 해 주세요');
+    } finally {
+      bell.disabled = false;
+      updateBell();
+    }
+  };
+
   // ---------- 들어가기 / 나가기 ----------
   function showLogin(msg) {
     $('#chat').classList.add('hidden');
@@ -583,8 +717,10 @@
     showLogin(msg);
   }
 
-  $('#logoutBtn').onclick = () => {
-    if (confirm('이 기기에서 나갈까요?\n다시 들어오려면 가족 비밀번호가 필요해요.')) logout();
+  $('#logoutBtn').onclick = async () => {
+    if (!confirm('이 기기에서 나갈까요?\n다시 들어오려면 가족 비밀번호가 필요해요.\n이 기기의 채팅 알림도 꺼져요.')) return;
+    await unsubscribePush(true);
+    logout();
   };
 
   $('#loginForm').addEventListener('submit', async (e) => {
@@ -624,6 +760,7 @@
       box.replaceChildren(el('div', 'empty', e.message));
     }
     schedule();
+    if (token) initPush();
   }
 
   if (token) start(); else showLogin();

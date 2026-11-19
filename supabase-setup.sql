@@ -15,7 +15,17 @@ create table if not exists public.messages (
 alter table public.messages enable row level security;
 grant all on table public.messages to service_role;
 
--- 2) 사진·동영상 보관함 (비공개, 파일 1개 최대 50MB)
+-- 2) 알림 받을 기기 목록
+create table if not exists public.push_subscriptions (
+  endpoint    text primary key,
+  name        text not null,
+  sub         jsonb not null,
+  updated_at  timestamptz not null default now()
+);
+alter table public.push_subscriptions enable row level security;
+grant all on table public.push_subscriptions to service_role;
+
+-- 3) 사진·동영상 보관함 (비공개, 파일 1개 최대 50MB)
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('family', 'family', false, 52428800, array['image/*', 'video/*'])
 on conflict (id) do nothing;
