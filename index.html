@@ -123,6 +123,21 @@
   #help .note { color: var(--muted); font-size: 14px; margin: 0 0 18px; line-height: 1.5; }
   @media (max-width: 480px) { .me-chip { display: none; } }
 
+  /* 프로필 사진·읽음 표시 */
+  .avatar { background-size: cover; background-position: center; }
+  .avatar.sm { width: 32px; height: 32px; font-size: 14px; }
+  .avatar.xs { width: 16px; height: 16px; font-size: 9px; }
+  .me-btn { display: flex; align-items: center; gap: 6px; border: 0; background: none; padding: 4px; cursor: pointer; color: inherit; }
+  #profile { position: fixed; inset: 0; background: rgba(40, 25, 10, .45); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 15; }
+  #profile .card { max-width: 380px; }
+  #profile h3 { margin: 0 0 16px; font-size: 20px; }
+  .pf-av { width: 120px; height: 120px; font-size: 48px; margin: 0 auto 12px; }
+  .pf-actions { display: flex; justify-content: center; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
+  .btn.ghost { background: #eee3d6; color: var(--ink); margin-top: 8px; }
+  .seen { display: flex; align-items: center; gap: 3px; margin: 3px 0 0 48px; font-size: 11px; color: var(--muted); }
+  .seen.mine { justify-content: flex-end; margin-left: 0; }
+  .seen-text { margin-left: 3px; }
+
   /* 통화 */
   .head-btn { flex: none; width: 42px; height: 42px; border-radius: 50%; border: 0; background: var(--soft); font-size: 20px; cursor: pointer; }
   .head-btn:active { background: #ffe2b8; }
@@ -187,7 +202,9 @@
 <section id="chat" class="hidden">
   <header>
     <h2>🏠 우리 가족</h2>
-    <span class="me-chip" id="meChip"></span>
+    <button class="me-btn" id="meBtn" type="button" aria-label="내 프로필">
+      <span class="avatar sm" id="meAvatar"></span><span class="me-chip" id="meChip"></span>
+    </button>
     <button class="head-btn hidden" id="installBtn" type="button" aria-label="앱으로 설치" title="앱으로 설치">📲</button>
     <button class="head-btn" id="callBtn" type="button" aria-label="전화 걸기">📞</button>
     <button class="bell" id="bellBtn" type="button">🔔 알림 켜기</button>
@@ -218,6 +235,24 @@
     <h3 id="helpTitle"></h3>
     <div id="helpBody"></div>
     <button class="btn" id="helpOk" type="button">알겠어요</button>
+  </div>
+</div>
+
+<div id="profile" class="hidden" role="dialog" aria-modal="true">
+  <div class="card">
+    <h3>내 프로필</h3>
+    <div class="avatar pf-av" id="pfAvatar"></div>
+    <div class="pf-actions">
+      <button class="mbtn" id="pfPhoto" type="button">📷 사진 바꾸기</button>
+      <button class="mbtn" id="pfRemove" type="button">사진 지우기</button>
+    </div>
+    <input id="pfFile" type="file" accept="image/*" hidden>
+    <label class="field"><span>내 이름</span>
+      <input id="pfName" type="text" maxlength="20">
+    </label>
+    <button class="btn" id="pfSave" type="button">이름 바꾸기</button>
+    <button class="btn ghost" id="pfClose" type="button">닫기</button>
+    <div class="err" id="pfErr" role="alert"></div>
   </div>
 </div>
 
@@ -302,8 +337,8 @@
   function buildRow(m) {
     const mine = m.author === myName;
     const row = el('div', 'row' + (mine ? ' mine' : ''));
-    const av = el('div', 'avatar', [...m.author][0] || '?');
-    av.style.background = colorOf(m.author);
+    const av = el('div', 'avatar');
+    paintAvatar(av, m.author);
     const col = el('div', 'col');
     const line = el('div', 'line');
     const b = el('div', 'bubble');
@@ -375,6 +410,7 @@
     for (const m of msgs) { place(frag, prev, m); prev = m; }
     box.replaceChildren(frag);
     renderedMax = msgs.length ? msgs[msgs.length - 1].id : 0;
+    renderSeen();
   }
 
   function addMessages(list) {
@@ -392,6 +428,7 @@
       box.querySelector('.empty')?.remove();
       for (const m of added) place(box, msgs[msgs.indexOf(m) - 1] || null, m);
       renderedMax = msgs[msgs.length - 1].id;
+      renderSeen();
     }
     if (stick || added.some((m) => m.author === myName)) scrollBottom();
     return added;
@@ -553,8 +590,13 @@
     polling = true;
     clearTimeout(timer);
     try {
-      const d = await api('/api/messages?after=' + cursor + '&sig=' + sigCursor);
+      // 화면을 보고 있으면 "여기까지 봤어요"를 같이 알린다
+      const top = msgs.length ? msgs[msgs.length - 1].id : 0;
+      const readNow = !document.hidden && top > sentRead ? top : 0;
+      const d = await api('/api/messages?after=' + cursor + '&sig=' + sigCursor + (readNow ? '&read=' + readNow : ''));
+      if (readNow) sentRead = readNow;
       handleSignals(d.signals, d.now);
+      handleReads(d.reads);
       if (d.messages.length) {
         cursor = Math.max(cursor, ...d.messages.map((m) => m.id));
         const added = addMessages(d.messages);
@@ -671,8 +713,50 @@
     $('#helpTitle').textContent = title;
     $('#helpBody').innerHTML = html;
     $('#help').classList.remove('hidden');
+    const oc = $('#openChrome');
+    if (oc) oc.onclick = openInChrome;
   }
   $('#helpOk').onclick = () => $('#help').classList.add('hidden');
+
+  // ---------- 알림이 안 되는 브라우저 안내 ----------
+  // 밴드·카톡 안의 미니 브라우저는 알림을 아예 못 받고, 삼성 인터넷은 알림이 무음이거나 안 오는 경우가 있다
+  const UA = navigator.userAgent;
+  const IS_ANDROID = /Android/i.test(UA);
+  const IN_APP = /; wv\)|Band\/|KAKAOTALK|Instagram|FBAN|FBAV|NAVER\(inapp|Line\/|DaumApps/i.test(UA);
+  const IS_SAMSUNG = /SamsungBrowser/i.test(UA);
+  const APP_NAME = /Band\//i.test(UA) ? '밴드' : /KAKAOTALK/i.test(UA) ? '카카오톡' : '다른 앱';
+
+  function openInChrome() {
+    const url = location.host + '/';
+    if (IS_ANDROID) {
+      const fallback = encodeURIComponent('https://play.google.com/store/apps/details?id=com.android.chrome');
+      location.href = `intent://${url}#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${fallback};end`;
+    } else if (/KAKAOTALK/i.test(UA)) {
+      location.href = 'kakaotalk://web/openExternal?url=' + encodeURIComponent('https://' + url);
+    }
+  }
+
+  function browserAdvice(force) {
+    // 밴드·카톡 안에서는 다른 브라우저로 보내지 않는다 (아이가 밴드에서만 쓰도록 해 둔 집도 있음)
+    if (IN_APP) {
+      if (force) {
+        showHelp(`${APP_NAME} 안에서는 알림을 못 받아요`,
+          `<p class="note">${APP_NAME} 앱 안에서 열면 채팅방을 닫았을 때는 알림이 오지 않아요.<br>대신 채팅방을 <b>열어 두면</b> 새 메시지가 올 때 <b>"띵" 소리와 진동</b>으로 알려 드려요.</p>`);
+      }
+      return true;
+    }
+    if (IS_SAMSUNG && IS_ANDROID && (force || !store.get('fc_samsung_tip'))) {
+      store.set('fc_samsung_tip', '1');
+      showHelp('크롬으로 쓰면 알림이 잘 와요',
+        `<p class="note">지금은 <b>삼성 인터넷</b>으로 열려 있어요. 삼성 인터넷은 채팅 알림이 <b>소리 없이 오거나 안 오는</b> 경우가 있어요.</p>
+         <ol><li>아래 <b>크롬으로 열기</b>를 눌러요.</li><li>크롬에서 이름과 비밀번호로 들어가요.</li><li><b>🔕 알림 켜기 → 허용</b>, 그다음 <b>📲 앱 설치</b>를 눌러요.</li>
+         <li>홈 화면에 있던 삼성 인터넷용 '우리 가족' 아이콘은 지워 주세요.</li></ol>
+         <button class="btn" id="openChrome" type="button" style="margin-bottom:10px">크롬으로 열기</button>`);
+      return true;
+    }
+    return false;
+  }
+  setTimeout(() => browserAdvice(false), 600);
 
   const IOS_HELP = `<ol>
       <li>사파리 화면의 <b>공유 버튼</b>(네모에 화살표 ⬆)을 눌러요.</li>
@@ -753,6 +837,7 @@
       toast('알림을 껐어요');
       return;
     }
+    if (IN_APP) return browserAdvice(true);
     if (!PUSH_OK) {
       if (IS_IOS && !STANDALONE) return showHelp('아이패드·아이폰에서 알림 받기', IOS_HELP);
       return showHelp('이 브라우저는 알림을 못 받아요',
@@ -1075,9 +1160,7 @@
     if (!c) return;
     const videoLive = c.video && c.state === 'active';
     cv.className = [videoLive ? 'with-video' : '', c.video && c.local ? 'show-local' : '', c.state === 'ringing' ? 'ringing' : ''].join(' ');
-    const av = $('#callAvatar');
-    av.textContent = [...c.peer][0] || '?';
-    av.style.background = colorOf(c.peer);
+    paintAvatar($('#callAvatar'), c.peer);
     $('#callName').textContent = c.peer;
     $('#callStatus').textContent = {
       calling: `${kindName(c)} 거는 중…`,
@@ -1171,8 +1254,8 @@
       }
       for (const name of d.members) {
         const row = el('div', 'member');
-        const av = el('div', 'avatar', [...name][0]);
-        av.style.background = colorOf(name);
+        const av = el('div', 'avatar');
+        paintAvatar(av, name);
         const v = el('button', 'mbtn', '🎥 영상');
         v.type = 'button';
         v.onclick = () => startCall(name, true);
@@ -1218,6 +1301,173 @@
     }).catch(() => {});
   });
 
+  // ---------- 프로필 사진 ----------
+  const profiles = new Map(); // 이름 -> { path, url }
+  let profileTimer = null;
+
+  function paintAvatar(node, name) {
+    node.dataset.av = name;
+    const p = profiles.get(name);
+    if (p && p.url) {
+      node.textContent = '';
+      node.style.background = `#ddd center / cover no-repeat url("${p.url}")`;
+    } else {
+      node.textContent = [...name][0] || '?';
+      node.style.background = colorOf(name);
+    }
+  }
+  function repaintAvatars() {
+    document.querySelectorAll('[data-av]').forEach((n) => paintAvatar(n, n.dataset.av));
+  }
+
+  async function loadProfiles() {
+    try {
+      const d = await api('/api/profile');
+      let changed = false;
+      const seen = new Set();
+      for (const p of d.profiles) {
+        seen.add(p.name);
+        const cur = profiles.get(p.name);
+        // 같은 사진이면 주소를 그대로 둬서 다시 내려받지 않게 한다
+        if (!cur || cur.path !== p.path) { profiles.set(p.name, { path: p.path, url: p.url }); changed = true; }
+      }
+      for (const n of [...profiles.keys()]) if (!seen.has(n)) { profiles.delete(n); changed = true; }
+      if (changed) repaintAvatars();
+    } catch {}
+  }
+
+  // 가운데를 정사각형으로 잘라 작게 만든다
+  async function squareImage(file) {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      const s = Math.min(img.naturalWidth, img.naturalHeight);
+      const c = document.createElement('canvas');
+      c.width = c.height = 320;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, 320, 320);
+      ctx.drawImage(img, (img.naturalWidth - s) / 2, (img.naturalHeight - s) / 2, s, s, 0, 0, 320, 320);
+      const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.88));
+      if (!blob) throw new Error('사진을 읽지 못했어요');
+      return blob;
+    } catch {
+      throw new Error('이 사진은 쓸 수 없어요. 다른 사진을 골라 주세요');
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  function openProfile() {
+    paintAvatar($('#pfAvatar'), myName);
+    $('#pfName').value = myName;
+    $('#pfErr').textContent = '';
+    $('#pfRemove').classList.toggle('hidden', !profiles.get(myName));
+    $('#profile').classList.remove('hidden');
+  }
+  $('#meBtn').onclick = openProfile;
+  $('#pfClose').onclick = () => $('#profile').classList.add('hidden');
+  $('#pfPhoto').onclick = () => $('#pfFile').click();
+
+  $('#pfFile').onchange = async (e) => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    $('#pfErr').textContent = '사진 올리는 중…';
+    try {
+      const blob = await squareImage(f);
+      const up = await api('/api/upload', { method: 'POST', body: JSON.stringify({ type: 'image/jpeg', size: blob.size }) });
+      await putFile(up.signedUrl, blob, () => {});
+      const d = await api('/api/profile', { method: 'POST', body: JSON.stringify({ action: 'avatar', avatar_path: up.path }) });
+      profiles.set(myName, { path: d.path, url: d.url });
+      repaintAvatars();
+      $('#pfRemove').classList.remove('hidden');
+      $('#pfErr').textContent = '';
+      toast('프로필 사진을 바꿨어요');
+    } catch (err) {
+      $('#pfErr').textContent = err.message;
+    }
+  };
+
+  $('#pfRemove').onclick = async () => {
+    if (!confirm('프로필 사진을 지울까요?')) return;
+    try {
+      await api('/api/profile', { method: 'POST', body: JSON.stringify({ action: 'remove_avatar' }) });
+      profiles.delete(myName);
+      repaintAvatars();
+      $('#pfRemove').classList.add('hidden');
+    } catch (err) {
+      $('#pfErr').textContent = err.message;
+    }
+  };
+
+  $('#pfSave').onclick = async () => {
+    const next = $('#pfName').value.replace(/\s+/g, ' ').trim();
+    if (!next || next === myName) return;
+    if (!confirm(`이름을 '${next}'(으)로 바꿀까요?\n지금까지 보낸 메시지도 새 이름으로 바뀌어요.`)) return;
+    try {
+      const d = await api('/api/profile', { method: 'POST', body: JSON.stringify({ action: 'rename', name: next }) });
+      const old = myName;
+      token = d.token; myName = d.name;
+      store.set('fc_token', token); store.set('fc_name', myName);
+      for (const m of msgs) if (m.author === old) m.author = myName;
+      const p = profiles.get(old);
+      if (p) { profiles.delete(old); profiles.set(myName, p); }
+      if (reads.has(old)) { reads.set(myName, reads.get(old)); reads.delete(old); }
+      rows.clear();
+      renderAll();
+      $('#meChip').textContent = myName;
+      paintAvatar($('#meAvatar'), myName);
+      paintAvatar($('#pfAvatar'), myName);
+      toast('이름을 바꿨어요');
+    } catch (err) {
+      $('#pfErr').textContent = err.message;
+    }
+  };
+
+  // ---------- 읽음 표시 ----------
+  let reads = new Map();   // 이름 -> 마지막으로 본 메시지 번호
+  let sentRead = 0;
+
+  function handleReads(list) {
+    if (!Array.isArray(list)) return;
+    const next = new Map(list.map((r) => [r.name, Number(r.last_read_id)]));
+    let same = next.size === reads.size;
+    if (same) for (const [k, v] of next) if (reads.get(k) !== v) { same = false; break; }
+    if (same) return;
+    reads = next;
+    renderSeen();
+  }
+
+  // 각 가족이 마지막으로 본 메시지 아래에 작은 사진과 이름을 단다
+  function renderSeen() {
+    box.querySelectorAll('.seen').forEach((n) => n.remove());
+    if (!msgs.length) return;
+    const groups = new Map();
+    for (const [name, rid] of reads) {
+      if (name === myName) continue;
+      let target = null;
+      for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].id <= rid) { target = msgs[i]; break; }
+      if (!target || target.author === name) continue; // 자기가 쓴 글 밑에는 안 단다
+      if (!groups.has(target.id)) groups.set(target.id, { m: target, names: [] });
+      groups.get(target.id).names.push(name);
+    }
+    for (const { m, names } of groups.values()) {
+      const row = rows.get(m.id);
+      if (!row || !row.isConnected) continue;
+      const s = el('div', 'seen' + (m.author === myName ? ' mine' : ''));
+      for (const n of names) {
+        const a = el('span', 'avatar xs');
+        paintAvatar(a, n);
+        s.append(a);
+      }
+      s.append(el('span', 'seen-text', names.join('·') + ' 봤어요'));
+      row.after(s);
+    }
+  }
+
   // ---------- 들어가기 / 나가기 ----------
   function showLogin(msg) {
     $('#chat').classList.add('hidden');
@@ -1229,6 +1479,9 @@
   function logout(msg) {
     if (call) hangUp();
     clearTimeout(timer);
+    clearInterval(profileTimer);
+    reads = new Map();
+    sentRead = 0;
     token = null;
     store.del('fc_token');
     msgs = []; ids.clear(); rows.clear();
@@ -1265,7 +1518,11 @@
   async function start() {
     $('#login').classList.add('hidden');
     $('#chat').classList.remove('hidden');
-    $('#meChip').textContent = myName + ' 님';
+    $('#meChip').textContent = myName;
+    paintAvatar($('#meAvatar'), myName);
+    loadProfiles();
+    clearInterval(profileTimer);
+    profileTimer = setInterval(() => { if (token && !document.hidden) loadProfiles(); }, 60000);
     box.replaceChildren(el('div', 'empty', '불러오는 중…'));
     try {
       const d = await api('/api/messages?sig=' + sigCursor);
@@ -1273,6 +1530,7 @@
       msgs = []; ids.clear(); rows.clear();
       for (const m of d.messages) { ids.add(m.id); msgs.push(m); }
       cursor = msgs.length ? msgs[msgs.length - 1].id : 0;
+      handleReads(d.reads);
       renderAll();
       scrollBottom();
       handleSignals(d.signals, d.now);

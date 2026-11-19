@@ -24,6 +24,22 @@ create index if not exists login_attempts_at_idx on public.login_attempts (at);
 alter table public.login_attempts enable row level security;
 grant all on table public.login_attempts to service_role;
 
+create table if not exists public.profiles (
+  name         text primary key,
+  avatar_path  text,
+  updated_at   timestamptz not null default now()
+);
+alter table public.profiles enable row level security;
+grant all on table public.profiles to service_role;
+
+create table if not exists public.reads (
+  name          text primary key,
+  last_read_id  bigint not null default 0,
+  updated_at    timestamptz not null default now()
+);
+alter table public.reads enable row level security;
+grant all on table public.reads to service_role;
+
 notify pgrst, 'reload schema';
 `;
 

@@ -34,12 +34,30 @@ export default async function handler(req, res) {
           .then(({ data, error }) => (error ? [] : data));
       const now = new Date().toISOString();
 
+      // 읽음 표시: 내가 어디까지 봤는지 적고, 가족 모두가 어디까지 봤는지 같이 돌려준다
+      const readId = parseInt(req.query.read, 10) || 0;
+      const readsPromise = (async () => {
+        try {
+          if (readId > 0) {
+            const { data: r } = await db().from('reads').select('last_read_id').eq('name', user).maybeSingle();
+            if (!r) await db().from('reads').insert({ name: user, last_read_id: readId });
+            else if (r.last_read_id < readId) {
+              await db().from('reads').update({ last_read_id: readId, updated_at: now }).eq('name', user);
+            }
+          }
+          const { data, error } = await db().from('reads').select('name, last_read_id');
+          return error ? undefined : data;
+        } catch {
+          return undefined;
+        }
+      })();
+
       if (after) {
         const { data, error } = await db()
           .from('messages').select('*')
           .gt('id', after).order('id', { ascending: true }).limit(200);
         if (error) throw error;
-        return res.json({ messages: await withUrls(data), signals: await sigPromise, now });
+        return res.json({ messages: await withUrls(data), signals: await sigPromise, reads: await readsPromise, now });
       }
 
       let q = db().from('messages').select('*');
@@ -48,7 +66,7 @@ export default async function handler(req, res) {
       if (error) throw error;
       const hasMore = data.length > PAGE;
       const rows = data.slice(0, PAGE).reverse();
-      return res.json({ messages: await withUrls(rows), hasMore, signals: await sigPromise, now });
+      return res.json({ messages: await withUrls(rows), hasMore, signals: await sigPromise, reads: await readsPromise, now });
     }
 
     if (req.method === 'POST') {
