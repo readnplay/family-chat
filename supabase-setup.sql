@@ -25,6 +25,9 @@ create table if not exists public.push_subscriptions (
 alter table public.push_subscriptions enable row level security;
 grant all on table public.push_subscriptions to service_role;
 
+-- (통화 신호 표 call_signals, 비밀번호 잠금 표 login_attempts는
+--  서버가 api/_schema.js에서 알아서 만들기 때문에 여기 적지 않아도 된다.)
+
 -- 3) 사진·동영상 보관함 (비공개, 파일 1개 최대 50MB)
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values ('family', 'family', false, 52428800, array['image/*', 'video/*'])
