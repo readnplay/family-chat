@@ -1,4 +1,4 @@
-import { db } from './_lib.js';
+import { getKv, setKv } from './_lib.js';
 import { ensureSchema } from './_schema.js';
 
 // 밴드 앱 안에서만 채팅방을 쓰는 가족(민결이)을 위해,
@@ -30,14 +30,6 @@ async function call(method, path, params) {
     throw new Error(`밴드 API 오류 ${path}: ${JSON.stringify(data).slice(0, 300)}`);
   }
   return data.result_data;
-}
-
-async function getKv(key) {
-  const { data } = await db().from('kv').select('value').eq('key', key).maybeSingle();
-  return data ? data.value : null;
-}
-async function setKv(key, value) {
-  await db().from('kv').upsert({ key, value, updated_at: new Date().toISOString() });
 }
 
 export async function listBandNames() {

@@ -1,4 +1,5 @@
-import { db, BUCKET } from './_lib.js';
+import { db, BUCKET, getKv } from './_lib.js';
+import { turnMode } from './call.js';
 import { ensureSchema } from './_schema.js';
 import { bandEnabled, listBandNames } from './_band.js';
 
@@ -34,6 +35,9 @@ export default async function handler(req, res) {
   } else {
     result.band = process.env.BAND_ACCESS_TOKEN ? 'need-band-name' : 'off';
   }
+  result.turn = turnMode();
+  // 최근 통화 연결 기록 (이름·주소 없이 연결 방식과 결과만)
+  try { result.calls = ((await getKv('call_diag')) || []).slice(0, 5); } catch {}
   const ok = result.db && result.storage && result.password && result.tables;
   return res.status(ok ? 200 : 500).json({ ok, ...result });
 }

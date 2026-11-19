@@ -20,6 +20,15 @@ export function db() {
   return client;
 }
 
+// 작은 설정값 저장소 (표 kv)
+export async function getKv(key) {
+  const { data } = await db().from('kv').select('value').eq('key', key).maybeSingle();
+  return data ? data.value : null;
+}
+export async function setKv(key, value) {
+  await db().from('kv').upsert({ key, value, updated_at: new Date().toISOString() });
+}
+
 // 가족 비밀번호를 바꾸면 기존 로그인은 모두 풀리도록 비밀번호를 서명 키에 섞는다.
 function signingKey() {
   const base = process.env.SESSION_SECRET || SUPABASE_KEY || '';

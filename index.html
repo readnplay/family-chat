@@ -964,7 +964,7 @@
   }
 
   // 연결 주소를 다 모을 때까지 잠깐 기다렸다가 한 번에 보낸다
-  function waitIce(pc, ms = 3500) {
+  function waitIce(pc, ms = 5000) {
     return new Promise((resolve) => {
       if (pc.iceGatheringState === 'complete') return resolve();
       const t = setTimeout(resolve, ms);
@@ -997,9 +997,13 @@
           c.tick = setInterval(() => { if (call === c) $('#callStatus').textContent = fmtDur(Date.now() - c.startedAt); }, 1000);
           renderCall();
           schedule();
+          setTimeout(() => sendDiag(c, 'ok'), 1500);
         }
       } else if (st === 'failed') {
-        endCall('연결이 끊겼어요');
+        const wasLive = !!c.startedAt;
+        sendDiag(c, wasLive ? 'dropped' : 'failed').finally(() => {
+          if (call === c) endCall(wasLive ? '연결이 끊겼어요' : '연결하지 못했어요. 와이파이나 데이터를 확인해 주세요');
+        });
       } else if (st === 'disconnected') {
         clearTimeout(c.dropTimer);
         c.dropTimer = setTimeout(() => { if (call === c && pc.connectionState !== 'connected') endCall('연결이 끊겼어요'); }, 8000);
@@ -1017,9 +1021,46 @@
     c.connTimer = setTimeout(() => {
       if (call === c && !c.startedAt) {
         signal(c.peer, 'hangup', c.id).catch(() => {});
-        endCall('연결하지 못했어요. 와이파이나 데이터를 확인해 주세요');
+        sendDiag(c, 'timeout').finally(() => {
+          if (call === c) endCall('연결하지 못했어요. 와이파이나 데이터를 확인해 주세요');
+        });
       }
     }, 25000);
+  }
+
+  // 중계 서버 정보는 하루짜리라, 통화 직전에 새로 받아 둔다
+  async function refreshIce() {
+    try {
+      const d = await Promise.race([api('/api/call'), new Promise((_, rej) => setTimeout(() => rej(new Error('t')), 3000))]);
+      if (d.iceServers?.length) iceServers = d.iceServers;
+    } catch {}
+  }
+
+  // 연결이 어떻게 됐는지(직접 연결/중계, 실패 단계)만 서버에 남긴다. 주소는 보내지 않는다
+  async function sendDiag(c, result) {
+    try {
+      const out = { role: c.role, result, video: c.video, conn: '', ice: '', local: [], remote: [], pair: '',
+        browser: /SamsungBrowser/.test(UA) ? 'samsung' : /iPhone|iPad/.test(UA) ? (STANDALONE ? 'ios-app' : 'ios-safari')
+          : /; wv\)/.test(UA) ? 'webview' : /Chrome/.test(UA) ? (STANDALONE ? 'chrome-app' : 'chrome') : 'other' };
+      if (c.pc) {
+        out.conn = c.pc.connectionState || '';
+        out.ice = c.pc.iceConnectionState || '';
+        const stats = await c.pc.getStats();
+        const byId = new Map();
+        stats.forEach((s) => byId.set(s.id, s));
+        const types = (kind) => [...new Set([...byId.values()].filter((s) => s.type === kind)
+          .map((s) => `${s.candidateType}/${s.protocol || ''}`))];
+        out.local = types('local-candidate');
+        out.remote = types('remote-candidate');
+        for (const s of byId.values()) {
+          if (s.type === 'candidate-pair' && (s.nominated || s.selected) && s.state === 'succeeded') {
+            const l = byId.get(s.localCandidateId), r = byId.get(s.remoteCandidateId);
+            out.pair = `${l?.candidateType}-${r?.candidateType}`;
+          }
+        }
+      }
+      await signal(c.peer, 'diag', c.id, out);
+    } catch {}
   }
 
   // 전화 걸기
@@ -1031,7 +1072,9 @@
     renderCall();
     startTone('ringback'); // 버튼을 누르자마자 신호음이 들리게
     try {
+      const icePromise = refreshIce();
       c.local = await getMedia(video);
+      await icePromise;
       if (call !== c) { c.local.getTracks().forEach((t) => t.stop()); return; }
       renderCall();
       const pc = makePeer(c);
@@ -1072,7 +1115,9 @@
     clearTimeout(c.timeout);
     renderCall();
     try {
+      const icePromise = refreshIce();
       c.local = await getMedia(c.video);
+      await icePromise;
       if (call !== c) { c.local.getTracks().forEach((t) => t.stop()); return; }
       renderCall();
       const pc = makePeer(c);
