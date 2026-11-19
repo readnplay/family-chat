@@ -820,9 +820,9 @@
     stopTone();
     const play = kind === 'ring'
       ? () => { beep([880, 1320], 0.4, 0.2); beep([880, 1320], 0.4, 0.2, 0.55); if (navigator.vibrate) navigator.vibrate([600, 300, 600]); }
-      : () => beep([440, 480], 1.4, 0.07);
+      : () => beep([440, 480], 1.2, 0.16);   // 거는 쪽: "뚜르르~" 신호음
     play();
-    toneTimer = setInterval(play, kind === 'ring' ? 2200 : 3500);
+    toneTimer = setInterval(play, kind === 'ring' ? 2200 : 3200);
   }
   function stopTone() {
     clearInterval(toneTimer);
@@ -933,6 +933,7 @@
     const c = { id: newId(), peer, video, role: 'caller', state: 'calling' };
     call = c;
     renderCall();
+    startTone('ringback'); // 버튼을 누르자마자 신호음이 들리게
     try {
       c.local = await getMedia(video);
       if (call !== c) { c.local.getTracks().forEach((t) => t.stop()); return; }
@@ -945,7 +946,6 @@
       if (call !== c) return;
       await signal(peer, 'offer', c.id, { sdp: pc.localDescription.sdp, video });
       if (call !== c) { signal(peer, 'hangup', c.id).catch(() => {}); return; }
-      startTone('ringback');
       c.timeout = setTimeout(() => {
         if (call === c && c.state === 'calling') {
           signal(peer, 'hangup', c.id).catch(() => {});
