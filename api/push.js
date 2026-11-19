@@ -1,3 +1,4 @@
+import { waitUntil } from '@vercel/functions';
 import { db, getUser } from './_lib.js';
 import { vapidKeys, isPushEndpoint, sendToSubs } from './_push.js';
 
@@ -15,7 +16,10 @@ export default async function handler(req, res) {
       if (action === 'test') {
         const { data } = await db().from('push_subscriptions').select('endpoint, name, sub').eq('endpoint', String(endpoint || ''));
         if (!data || !data.length) return res.status(404).json({ error: '이 기기는 아직 알림이 등록되지 않았어요' });
-        await sendToSubs(data, { title: '🔔 알림 시험', body: '이렇게 소리·진동과 함께 알려 드려요!', url: '/', tag: 'family-test' });
+        // 화면을 끄거나 홈으로 나갈 시간을 주려고 10초 뒤에 보낸다
+        waitUntil(new Promise((r) => setTimeout(r, 10000)).then(() => sendToSubs(data, {
+          title: '🔔 알림 시험', body: '이렇게 소리·진동과 함께 알려 드려요!', url: '/', tag: 'family-test-' + Date.now(),
+        })).catch((e) => console.error('시험 알림 실패', e)));
         return res.json({ ok: true });
       }
 
