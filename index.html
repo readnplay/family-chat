@@ -188,6 +188,7 @@
   <header>
     <h2>🏠 우리 가족</h2>
     <span class="me-chip" id="meChip"></span>
+    <button class="head-btn hidden" id="installBtn" type="button" aria-label="앱으로 설치" title="앱으로 설치">📲</button>
     <button class="head-btn" id="callBtn" type="button" aria-label="전화 걸기">📞</button>
     <button class="bell" id="bellBtn" type="button">🔔 알림 켜기</button>
     <button class="link-btn" id="logoutBtn" type="button">나가기</button>
@@ -1175,6 +1176,24 @@
     }
   }
   $('#callBtn').onclick = openPicker;
+
+  // ---------- 앱으로 설치 (안드로이드 크롬·삼성 인터넷) ----------
+  // 앱으로 설치하면 알림이 '우리 가족' 앱 이름으로 오고, 소리 설정도 따로 할 수 있다
+  let installEvt = null;
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    installEvt = e;
+    $('#installBtn').classList.remove('hidden');
+  });
+  window.addEventListener('appinstalled', () => $('#installBtn').classList.add('hidden'));
+  $('#installBtn').onclick = async () => {
+    if (!installEvt) return;
+    installEvt.prompt();
+    const r = await installEvt.userChoice.catch(() => ({}));
+    installEvt = null;
+    $('#installBtn').classList.add('hidden');
+    if (r.outcome === 'accepted') toast('홈 화면에 🏠 우리 가족 앱이 생겨요');
+  };
   $('#pickClose').onclick = () => $('#pick').classList.add('hidden');
 
   // 창을 닫으면 상대에게도 통화가 끝났다고 알린다
