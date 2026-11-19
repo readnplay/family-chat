@@ -35,23 +35,36 @@ export function vapidKeys() {
   return keys;
 }
 
-// 보낸 사람을 뺀 가족 모두에게 알림을 보낸다.
-export async function notifyFamily(author, text) {
+export async function sendToSubs(subs, message) {
   vapidKeys();
+  const payload = JSON.stringify(message);
+  await Promise.allSettled(subs.map(async (s) => {
+    try {
+      await webpush.sendNotification(s.sub, payload, { TTL: message.call ? 60 : 60 * 60 * 24, urgency: 'high' });
+    } catch (err) {
+      if (err.statusCode === 404 || err.statusCode === 410) {
+        await db().from('push_subscriptions').delete().eq('endpoint', s.endpoint);
+      } else {
+        console.error('push 실패', err.statusCode, err.body || err.message);
+      }
+    }
+  }));
+}
+
+async function allSubs() {
   const { data, error } = await db().from('push_subscriptions').select('endpoint, name, sub');
   if (error) throw error;
-  const payload = JSON.stringify({ title: author, body: text, url: '/' });
-  await Promise.allSettled(
-    data.filter((s) => s.name !== author).map(async (s) => {
-      try {
-        await webpush.sendNotification(s.sub, payload, { TTL: 60 * 60 * 24, urgency: 'high' });
-      } catch (err) {
-        if (err.statusCode === 404 || err.statusCode === 410) {
-          await db().from('push_subscriptions').delete().eq('endpoint', s.endpoint);
-        } else {
-          console.error('push 실패', err.statusCode, err.body || err.message);
-        }
-      }
-    })
-  );
+  return data;
+}
+
+// 보낸 사람을 뺀 가족 모두에게 알림
+export async function notifyFamily(author, text) {
+  const subs = (await allSubs()).filter((s) => s.name !== author);
+  await sendToSubs(subs, { title: author, body: text, url: '/', tag: 'family-chat' });
+}
+
+// 특정 사람(그 이름으로 들어온 모든 기기)에게만 알림
+export async function notifyNames(names, message) {
+  const subs = (await allSubs()).filter((s) => names.includes(s.name));
+  await sendToSubs(subs, message);
 }

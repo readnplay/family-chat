@@ -24,12 +24,22 @@ export default async function handler(req, res) {
       const after = parseInt(req.query.after, 10) || 0;
       const before = parseInt(req.query.before, 10) || 0;
 
+      // 나에게 온 통화 신호(최근 1분)도 같이 가져간다
+      const sigPromise = req.query.sig === undefined ? Promise.resolve(undefined)
+        : db().from('call_signals')
+          .select('id, created_at, call_id, from_name, kind, data')
+          .eq('to_name', user).gt('id', parseInt(req.query.sig, 10) || 0)
+          .gte('created_at', new Date(Date.now() - 60000).toISOString())
+          .order('id', { ascending: true }).limit(50)
+          .then(({ data, error }) => (error ? [] : data));
+      const now = new Date().toISOString();
+
       if (after) {
         const { data, error } = await db()
           .from('messages').select('*')
           .gt('id', after).order('id', { ascending: true }).limit(200);
         if (error) throw error;
-        return res.json({ messages: await withUrls(data) });
+        return res.json({ messages: await withUrls(data), signals: await sigPromise, now });
       }
 
       let q = db().from('messages').select('*');
@@ -38,11 +48,11 @@ export default async function handler(req, res) {
       if (error) throw error;
       const hasMore = data.length > PAGE;
       const rows = data.slice(0, PAGE).reverse();
-      return res.json({ messages: await withUrls(rows), hasMore });
+      return res.json({ messages: await withUrls(rows), hasMore, signals: await sigPromise, now });
     }
 
     if (req.method === 'POST') {
-      const { kind = 'text', body, media_path, media_type } = req.body || {};
+      const { kind = 'text', body, media_path, media_type, quiet } = req.body || {};
       const text = typeof body === 'string' ? body.trim().slice(0, 4000) : '';
       const row = { author: user, kind, body: text || null };
 
@@ -65,7 +75,7 @@ export default async function handler(req, res) {
       const preview = kind === 'image' ? '📷 사진을 보냈어요'
         : kind === 'video' ? '🎬 동영상을 보냈어요'
         : text.length > 120 ? text.slice(0, 120) + '…' : text;
-      waitUntil(notifyFamily(user, preview).catch((e) => console.error('알림 실패', e)));
+      if (!quiet) waitUntil(notifyFamily(user, preview).catch((e) => console.error('알림 실패', e)));
 
       const [message] = await withUrls([data]);
       return res.json({ message });

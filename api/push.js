@@ -1,5 +1,5 @@
 import { db, getUser } from './_lib.js';
-import { vapidKeys, isPushEndpoint } from './_push.js';
+import { vapidKeys, isPushEndpoint, sendToSubs } from './_push.js';
 
 // GET: 알림 공개 열쇠 / POST: 이 기기 알림 등록·해제
 export default async function handler(req, res) {
@@ -11,6 +11,13 @@ export default async function handler(req, res) {
 
     if (req.method === 'POST') {
       const { action, subscription, endpoint } = req.body || {};
+
+      if (action === 'test') {
+        const { data } = await db().from('push_subscriptions').select('endpoint, name, sub').eq('endpoint', String(endpoint || ''));
+        if (!data || !data.length) return res.status(404).json({ error: '이 기기는 아직 알림이 등록되지 않았어요' });
+        await sendToSubs(data, { title: '🔔 알림 시험', body: '이렇게 소리·진동과 함께 알려 드려요!', url: '/', tag: 'family-test' });
+        return res.json({ ok: true });
+      }
 
       if (action === 'unsubscribe') {
         if (typeof endpoint === 'string') {

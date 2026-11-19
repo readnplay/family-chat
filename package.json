@@ -5,6 +5,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
     "@vercel/functions": "^3.11.3",
+    "pg": "^8.23.1",
     "web-push": "^4.0.0"
   }
 }

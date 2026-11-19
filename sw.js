@@ -10,9 +10,12 @@ self.addEventListener('push', (e) => {
       body: d.body || '새 메시지가 왔어요',
       icon: '/icon-192.png',
       badge: '/badge-96.png',
-      tag: 'family-chat',
-      renotify: true,
-      vibrate: [200, 100, 200],
+      tag: d.tag || 'family-chat',
+      renotify: true,              // 같은 묶음 알림이어도 매번 소리·진동
+      silent: false,
+      requireInteraction: !!d.call, // 전화는 누를 때까지 남겨 둔다
+      vibrate: d.call ? [600, 300, 600, 300, 600, 300, 600] : [300, 120, 300],
+      timestamp: Date.now(),
       data: { url: d.url || '/' },
     })
   );
