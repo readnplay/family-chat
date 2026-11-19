@@ -40,6 +40,14 @@ create table if not exists public.reads (
 alter table public.reads enable row level security;
 grant all on table public.reads to service_role;
 
+create table if not exists public.kv (
+  key         text primary key,
+  value       jsonb,
+  updated_at  timestamptz not null default now()
+);
+alter table public.kv enable row level security;
+grant all on table public.kv to service_role;
+
 notify pgrst, 'reload schema';
 `;
 

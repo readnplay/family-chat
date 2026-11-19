@@ -2,6 +2,7 @@ import { waitUntil } from '@vercel/functions';
 import { db, getUser } from './_lib.js';
 import { ensureSchema } from './_schema.js';
 import { notifyNames } from './_push.js';
+import { notifyBand } from './_band.js';
 
 const KINDS = ['offer', 'answer', 'decline', 'busy', 'hangup', 'taken'];
 const ID_RE = /^[0-9a-f-]{36}$/;
@@ -59,6 +60,7 @@ export default async function handler(req, res) {
           body: '눌러서 받아 주세요',
           url: '/', tag: 'family-call', call: true,
         }).catch((e) => console.error('통화 알림 실패', e)));
+        waitUntil(notifyBand(user, '', 'call').catch((e) => console.error('밴드 통화 알림 실패', e.message)));
       }
       return res.json({ ok: true });
     }

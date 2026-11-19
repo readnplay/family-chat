@@ -1,5 +1,6 @@
 import { db, BUCKET } from './_lib.js';
 import { ensureSchema } from './_schema.js';
+import { bandEnabled, listBandNames } from './_band.js';
 
 // 상태 확인용. Supabase 무료 프로젝트는 7일 동안 아무 요청이 없으면 잠들기 때문에
 // Vercel 크론이 하루 한 번 이 주소를 불러서 깨워 두고, 오래된 통화 신호도 치운다.
@@ -20,6 +21,18 @@ export default async function handler(req, res) {
     }
   } catch (err) {
     console.error(err);
+  }
+  // 밴드 알림 연결 상태 (밴드 이름 같은 정보는 밖으로 내보내지 않는다)
+  if (bandEnabled()) {
+    try {
+      const names = await listBandNames();
+      result.band = names.some((n) => n.trim() === process.env.BAND_NAME.trim()) ? 'ok' : 'band-not-found';
+    } catch (err) {
+      result.band = 'token-error';
+      console.error(err.message);
+    }
+  } else {
+    result.band = process.env.BAND_ACCESS_TOKEN ? 'need-band-name' : 'off';
   }
   const ok = result.db && result.storage && result.password && result.tables;
   return res.status(ok ? 200 : 500).json({ ok, ...result });

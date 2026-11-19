@@ -1,6 +1,7 @@
 import { waitUntil } from '@vercel/functions';
 import { db, BUCKET, getUser } from './_lib.js';
 import { notifyFamily } from './_push.js';
+import { notifyBand } from './_band.js';
 
 const PAGE = 80;
 const URL_TTL = 60 * 60 * 24 * 7; // 사진·영상 주소는 7일 동안 유효
@@ -93,7 +94,10 @@ export default async function handler(req, res) {
       const preview = kind === 'image' ? '📷 사진을 보냈어요'
         : kind === 'video' ? '🎬 동영상을 보냈어요'
         : text.length > 120 ? text.slice(0, 120) + '…' : text;
-      if (!quiet) waitUntil(notifyFamily(user, preview).catch((e) => console.error('알림 실패', e)));
+      if (!quiet) {
+        waitUntil(notifyFamily(user, preview).catch((e) => console.error('알림 실패', e)));
+        waitUntil(notifyBand(user, preview).catch((e) => console.error('밴드 알림 실패', e.message)));
+      }
 
       const [message] = await withUrls([data]);
       return res.json({ message });
